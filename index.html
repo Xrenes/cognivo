@@ -241,7 +241,7 @@ const flags = {research:false, think:false, concise:false};
 
 const toast = m => {const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800)};
 const save = () => LS.set('cg.chats', chats);
-const md = s => window.marked ? DOMPurify.sanitize(marked.parse(s||'')) : (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).replace(/\n/g,'<br>');
+const md = s => window.marked ? DOMPurify.sanitize(marked.parse(s||''),{FORBID_TAGS:['img','video','audio','iframe','form','style','svg'],FORBID_ATTR:['style','srcset']}) : (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).replace(/\n/g,'<br>');
 const esc = s => s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const headers = () => ({'Content-Type':'application/json', ...(cfg.key?{Authorization:'Bearer '+cfg.key}:{})});
 
