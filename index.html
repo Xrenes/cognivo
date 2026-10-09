@@ -131,7 +131,9 @@ dialog input,dialog textarea,dialog select{width:100%;background:#0f0f0f;border:
 dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
 dialog .row button{padding:8px 14px;border-radius:8px;border:1px solid var(--line)}
 dialog .row .pri{background:var(--accent);border-color:var(--accent);color:#fff}
-.status{font-size:12px;margin-top:8px;color:var(--muted)}
+.status{font-size:13px;margin-top:14px;padding-top:10px;border-top:1px solid var(--line);color:var(--muted)}
+.status.ok{color:#5fd37a}.status.bad{color:#ff7b7b}
+.hint{font-size:13px;color:var(--muted)}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2b2b2b;padding:9px 16px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;z-index:50}
 .toast.show{opacity:1}
 .openbtn{display:none}
@@ -210,16 +212,15 @@ body.collapsed .openbtn{display:grid}
 
 <dialog id="settingsDlg"><form method="dialog">
   <h2>Cognivo — Kaggle Connection</h2>
-  <label>Kaggle notebook URL <a id="sNbOpen" href="#" target="_blank" rel="noopener" style="color:var(--accent);float:right">Open ↗</a></label>
-  <input id="sNb" placeholder="https://www.kaggle.com/code/you/your-notebook" autocomplete="off" spellcheck="false">
-  <label>AI server endpoint <small style="color:var(--dim)">— Kaggle “1. API Base URL”</small></label>
+  <p class="hint">Paste the 3 values printed by the Kaggle cell.</p>
+  <label>1. API Base URL</label>
   <input id="sBase" placeholder="https://xxxx.trycloudflare.com/v1" autocomplete="off" spellcheck="false">
-  <label>AI model <small style="color:var(--dim)">— Kaggle “2. Model ID”</small></label>
-  <input id="sModel" list="sModels" placeholder="Filled in by Test Connection" autocomplete="off" spellcheck="false">
+  <label>2. Model ID</label>
+  <input id="sModel" list="sModels" placeholder="Qwen/Qwen2.5-Coder-1.5B-Instruct" autocomplete="off" spellcheck="false">
   <datalist id="sModels"></datalist>
-  <label>AI access token <small style="color:var(--dim)">— Kaggle “3. API Access Token”</small></label>
-  <input id="sKey" type="password" placeholder="ACCESS TOKEN printed by the Kaggle cell" autocomplete="off">
-  <div class="status" id="sStatus"></div>
+  <label>3. API Access Token</label>
+  <input id="sKey" type="password" placeholder="<random token>" autocomplete="off">
+  <div class="status" id="sStatus">Status: not tested</div>
   <div class="row"><button value="cancel">Cancel</button><button type="button" id="testBtn">Test Connection</button><button class="pri" value="save" id="saveBtn">Save Settings</button></div>
 </form></dialog>
 
@@ -454,20 +455,18 @@ $('#tplBtn').onclick = () => { newChat(); input.value='Act as an expert [role]. 
 /* ---------- settings ---------- */
 function openSettings(){
   $('#sBase').value = cfg.base===defaults.base ? '' : cfg.base; $('#sKey').value=cfg.key;
-  $('#sNb').value = cfg.notebook||''; $('#sModel').value = cfg.model||''; $('#sStatus').textContent=''; nbLink();
+  $('#sModel').value = cfg.model||''; setStatus('not tested','');
   $('#settingsDlg').showModal();
 }
 $('#settingsBtn').onclick = openSettings;
 // accept the tunnel URL with or without /v1 and trailing slash
 const normBase = u => { u=u.trim().replace(/\/+$/,''); return !u ? defaults.base : /\/v1$/.test(u) ? u : u+'/v1'; };
 const readForm = () => ({...cfg, base:normBase($('#sBase').value), key:$('#sKey').value.trim(),
-  model:$('#sModel').value.trim(), notebook:$('#sNb').value.trim()});
-function nbLink(){ const u=$('#sNb').value.trim(), ok=/^https:\/\/(www\.)?kaggle\.com\//.test(u);
-  $('#sNbOpen').style.display = ok ? '' : 'none'; if(ok) $('#sNbOpen').href=u; }
-$('#sNb').oninput = nbLink;
+  model:$('#sModel').value.trim()});
+function setStatus(t,c){ const e=$('#sStatus'); e.textContent='Status: '+t; e.className='status '+c; }
 $('#testBtn').onclick = async () => {
-  const old=cfg; cfg=readForm(); $('#sStatus').textContent='Testing…';
-  const ids = await loadModels(); $('#sStatus').textContent = ids.length ? '✅ Connected. Models: '+ids.join(', ') : '❌ '+(lastErr||'Could not reach '+cfg.base+'/models');
+  const old=cfg; cfg=readForm(); setStatus('testing…','');
+  const ids = await loadModels(); ids.length ? setStatus('OK - ready to connect','ok') : setStatus(lastErr||'Could not reach '+cfg.base+'/models','bad');
   if(ids.length){ $('#sModels').innerHTML = ids.map(id=>`<option value="${esc(id)}">`).join(''); $('#sModel').value = cfg.model; }
   cfg=old; LS.set('cg.cfg',cfg);  // testing must not save unsaved values
 };
