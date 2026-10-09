@@ -7,7 +7,8 @@ A working static chat page + connection manager + OpenAI-compatible Kaggle infer
 2. Cell 1: paste `kaggle/load_model.py` (set `MODEL_ID`). Cell 2: `%%writefile /kaggle/working/kaggle_server.py` + contents of `kaggle/server.py`. Cell 3: paste `kaggle/start_in_kaggle.py`.
 3. Cell 3 prints **1. API Base URL**, **2. Model ID**, **3. API Access Token**.
 4. Open the site → **Settings** (sidebar) → paste them into the matching fields → **Test Connection** → **Save Settings**.
-5. Switch models: change `MODEL_ID` in cell 1 and rerun only cell 1, then Test Connection again.
+5. Images: run `kaggle/load_image_model.py` as another cell (any time), then click **Image Generation** in the site sidebar and describe the picture.
+6. Switch models: change `MODEL_ID` in cell 1 and rerun only cell 1, then Test Connection again.
 
 `index.html` (root) is the main Cognivo UI. `web/index.html` is an older minimal alternative.
 

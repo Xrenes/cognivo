@@ -33,6 +33,30 @@ def authorize(header):
     if not header or not header.startswith(prefix) or not secrets.compare_digest(header[len(prefix):],API_KEY):
         raise HTTPException(status_code=401,detail='Invalid access token')
 
+class ImageRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=1000)
+    size: Literal['512x512','768x768','1024x1024'] = '512x512'
+    n: int = Field(default=1, ge=1, le=1)
+    model: str | None = None
+    response_format: str | None = None
+
+@app.post('/v1/images/generations')
+def images(req: ImageRequest, authorization: str|None=Header(default=None)):
+    authorize(authorization)
+    import __main__, io, base64
+    pipe = getattr(__main__, 'pipe', None)
+    if pipe is None: raise HTTPException(status_code=503, detail='No image model loaded (run load_image_model.py)')
+    if not lock.acquire(blocking=False): raise HTTPException(status_code=429, detail='GPU busy; retry shortly')
+    try:
+        w, h = (int(x) for x in req.size.split('x'))
+        steps = int(os.environ.get('COGNIVO_IMAGE_STEPS', '4'))
+        guidance = float(os.environ.get('COGNIVO_IMAGE_GUIDANCE', '0'))
+        with torch.inference_mode():
+            img = pipe(prompt=req.prompt, width=w, height=h, num_inference_steps=steps, guidance_scale=guidance).images[0]
+        buf = io.BytesIO(); img.save(buf, format='PNG')
+        return {'created': int(time.time()), 'data': [{'b64_json': base64.b64encode(buf.getvalue()).decode()}]}
+    finally: lock.release()
+
 @app.get('/v1/models')
 def models(authorization: str|None=Header(default=None)):
     authorize(authorization)

@@ -33,6 +33,15 @@ body.collapsed aside{margin-left:-240px}
 .nav button{display:flex;align-items:center;gap:10px;width:100%;padding:8px 4px;border-radius:8px;text-align:left}
 .nav button:hover,.hist button:hover{background:#262626}
 .nav svg{width:17px;height:17px}
+.nav button.on{background:rgba(255,138,61,.12);color:var(--accent)}
+.modechip{display:none;align-items:center;gap:6px;color:var(--accent);background:rgba(255,138,61,.08);box-shadow:inset 0 0 0 1px var(--accent);border-radius:9px;padding:5px 10px;font-size:14px}
+body.imgmode .modechip{display:flex}
+.modechip select{background:none;border:0;color:var(--accent);font:inherit;font-size:13px;outline:0}
+.modechip select option{background:#222;color:var(--text)}
+.modechip button{color:var(--accent);padding:0 2px}
+.gen{display:block;max-width:min(100%,512px);border-radius:12px;border:1px solid var(--line)}
+.genwait{width:min(100%,384px);aspect-ratio:1;border-radius:12px;border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);background:linear-gradient(110deg,#151515 30%,#222 50%,#151515 70%);background-size:200% 100%;animation:sh 1.4s linear infinite}
+@keyframes sh{to{background-position:-200% 0}}
 .hist{flex:1;overflow-y:auto;margin-top:14px;-webkit-mask-image:linear-gradient(#000 80%,transparent)}
 .hist h6{font-size:11px;font-weight:400;color:var(--muted);letter-spacing:.04em;margin:12px 0 4px;text-transform:uppercase}
 .hist .item{display:flex;align-items:center;border-radius:8px}
@@ -160,7 +169,7 @@ body.collapsed .openbtn{display:grid}
   </div>
   <button class="newchat" id="newChat"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Chat<kbd>Ctrl N</kbd></button>
   <div class="nav">
-    <button data-prompt="What can you help me with? Give me a short tour of your abilities."><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>Explore Cognivo AI</button>
+    <button id="imgModeBtn"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>Image Generation</button>
     <button id="kbBtn"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7.5 7.5 11 16M16.5 7.5 13 16"/></svg>Knowledge Base</button>
     <button id="tplBtn"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7zM4 7l8 4 8-4M12 11v10"/></svg>Templates</button>
   </div>
@@ -200,6 +209,9 @@ body.collapsed .openbtn{display:grid}
         <div class="files" id="files"></div>
         <textarea id="input" rows="2" placeholder="Ask me anything..."></textarea>
         <div class="tools">
+          <span class="modechip" id="modeChip">🖼 Image mode
+            <select id="imgSize" title="Image size"><option>512x512</option><option>768x768</option><option>1024x1024</option></select>
+            <button id="modeOff" title="Back to chat">✕</button></span>
           <div class="sp"></div>
           <button class="send" id="sendBtn" title="Send"><svg viewBox="0 0 24 24"><path d="M5 4l15 8-15 8 3-8z"/></svg></button>
         </div>
@@ -273,7 +285,11 @@ function renderThread(){
   $('#thread').innerHTML = cur.messages.map((m,i)=>msgHTML(m,i)).join('');
   scrollDown();
 }
+const okImg = u => typeof u==='string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(u);
 function msgHTML(m,i){
+  if(m.img && m.role==='assistant') return `<div class="msg bot" data-i="${i}"><div class="ic"><svg><use href="#lg"/></svg></div><div style="flex:1;min-width:0"><div class="b ${m.error?'err':''}">${
+    m.error ? md(m.errText) : okImg(m.image) ? `<img class="gen" alt="${esc(m.content)}" src="${m.image}">` : '<div class="genwait">Generating image…</div>'}</div>
+  <div class="acts">${okImg(m.image)?'<button data-a="dl" title="Download"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>':''}<button data-a="regen" title="Regenerate"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7"/></svg></button></div></div></div>`;
   if(m.role==='user') return `<div class="msg user"><div class="b">${esc(m.display??m.content)}</div></div>`;
   return `<div class="msg bot" data-i="${i}"><div class="ic"><svg><use href="#lg"/></svg></div><div style="flex:1;min-width:0"><div class="b ${m.error?'err':''}">${md(m.content)}</div>
   <div class="acts"><button data-a="copy" title="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/></svg></button><button data-a="regen" title="Regenerate"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7"/></svg></button><button data-a="speak" title="Read aloud"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></button></div></div></div>`;
@@ -284,7 +300,8 @@ $('#thread').onclick = e => {
   const i = +b.closest('.msg').dataset.i, m = cur.messages[i];
   if(b.dataset.a==='copy'){ navigator.clipboard.writeText(m.content); toast('Copied'); }
   if(b.dataset.a==='speak'){ speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(m.content.replace(/[#*`_>]/g,''))); }
-  if(b.dataset.a==='regen' && !ctrl){ cur.messages.splice(i); renderThread(); generate(); }
+  if(b.dataset.a==='dl') Object.assign(document.createElement('a'),{href:m.image,download:(m.content.replace(/[^\w ]/g,'').slice(0,40)||'image')+'.jpg'}).click();
+  if(b.dataset.a==='regen' && !ctrl){ cur.messages.splice(i); renderThread(); m.img ? generateImage(m.content) : generate(); }
 };
 
 /* ---------- sending ---------- */
@@ -292,12 +309,18 @@ async function send(){
   if(ctrl) return stop();
   const text = $('#input').value.trim();
   if(!text && !attachments.length) return;
+  if(imgMode && !text) return toast('Describe the image you want');
   if(!cur){ cur = {id:crypto.randomUUID?.()||String(Date.now()), title:(text||attachments[0].name).slice(0,60), messages:[], updated:Date.now()}; chats.push(cur); }
   const images = attachments.filter(a=>a.type==='image');
   const docs = attachments.filter(a=>a.type==='text');
   let full = text + docs.map(d=>`\n\n--- File: ${d.name} ---\n${d.data}`).join('');
   const content = images.length ? [{type:'text',text:full}, ...images.map(im=>({type:'image_url',image_url:{url:im.data}}))] : full;
   const display = text + (attachments.length ? `\n📎 ${attachments.map(a=>a.name).join(', ')}` : '');
+  if(imgMode){
+    cur.messages.push({role:'user', content:text, display:'🖼 '+text, img:true});
+    $('#input').value=''; autosize(); renderThread(); renderHist();
+    return generateImage(text);
+  }
   cur.messages.push({role:'user', content, display});
   $('#input').value=''; autosize(); attachments=[]; renderFiles();
   renderThread(); renderHist();
@@ -316,11 +339,42 @@ function systemPrompt(){
 const asText = c => typeof c==='string' ? c : c.map(p=>p.text||'').join('\n');
 // Kaggle server limits: <=16 messages, <=12000 chars each, no empty content, max_tokens <=1024
 function buildMessages(){
-  const hist = cur.messages.slice(0,-1).filter(m=>!m.error)
+  const hist = cur.messages.slice(0,-1).filter(m=>!m.error && !m.img)
     .map(m=>({role:m.role, content:asText(m.content).slice(0,12000)})).filter(m=>m.content.trim()).slice(-15);
   while(hist.length && hist[0].role!=='user') hist.shift();
   return [{role:'system',content:systemPrompt().slice(0,12000)}, ...hist];
 }
+
+/* ---------- image generation ---------- */
+let imgMode = false;
+function setImgMode(on){
+  imgMode = on; document.body.classList.toggle('imgmode', on); $('#imgModeBtn').classList.toggle('on', on);
+  input.placeholder = on ? 'Describe an image to generate…' : 'Ask me anything...';
+  $('#welcome h1').textContent = on ? 'What should we create?' : 'Let’s start a smart conversation';
+  input.focus();
+}
+// shrink the PNG to a JPEG so chat history fits in browser storage
+const toJpeg = src => new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{ const c=document.createElement('canvas');
+  c.width=im.naturalWidth; c.height=im.naturalHeight; c.getContext('2d').drawImage(im,0,0); res(c.toDataURL('image/jpeg',0.85)); }; im.onerror=()=>rej(new Error('Invalid image data')); im.src=src; });
+async function generateImage(prompt){
+  const msg = {role:'assistant', img:true, content:prompt, image:''};
+  cur.messages.push(msg); renderThread(); setSending(true); ctrl = new AbortController();
+  try{
+    const res = await fetch(cfg.base.replace(/\/$/,'')+'/images/generations', {method:'POST', headers:headers(), signal:ctrl.signal,
+      body: JSON.stringify({prompt:prompt.slice(0,1000), size:$('#imgSize').value, n:1, response_format:'b64_json'})});
+    if(!res.ok){ const t=(await res.text()).slice(0,300);
+      throw new Error(res.status===401?'Wrong or missing access token (Settings).':res.status===404?'This server has no image endpoint. Update kaggle_server.py and run the image-model cell in Kaggle.':res.status===503?'No image model loaded in Kaggle — run the image-model cell.':res.status===429?'GPU busy — try again in a moment.':`HTTP ${res.status}: ${t}`); }
+    const b64 = (await res.json()).data?.[0]?.b64_json;
+    if(!b64) throw new Error('Server returned no image');
+    msg.image = await toJpeg('data:image/png;base64,'+b64);
+  }catch(e){
+    msg.error = true;
+    msg.errText = e.name==='AbortError' ? '_(stopped)_' : `**Couldn't generate the image.** ${e instanceof TypeError ? 'Network/CORS — is the Kaggle cell + tunnel still running?' : e.message}`;
+  }
+  cur.updated = Date.now(); save(); renderThread(); renderHist(); setSending(false); ctrl=null;
+}
+$('#imgModeBtn').onclick = () => { setImgMode(!imgMode); if(innerWidth<820) document.body.classList.add('collapsed'); };
+$('#modeOff').onclick = () => setImgMode(false);
 
 async function generate(){
   const msg = {role:'assistant', content:''};
