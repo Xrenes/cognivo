@@ -8,6 +8,7 @@ p.add_argument("--port", type=int, default=int(os.getenv("UI_PORT", 8080)))
 p.add_argument("--backend", default=os.getenv("BACKEND", "http://127.0.0.1:8000"))
 args = p.parse_args()
 PASSWORD = os.getenv("UI_PASSWORD", "")  # set to require HTTP Basic auth (any username)
+BACKEND_KEY = os.getenv("BACKEND_API_KEY", "")  # added server-side; client credentials are never forwarded
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -19,7 +20,8 @@ class H(http.server.SimpleHTTPRequestHandler):
 
     def _proxy(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0)) or None
-        hdrs = {k: v for k, v in self.headers.items() if k.lower() in ("content-type", "authorization")}
+        hdrs = {"Content-Type": self.headers.get("Content-Type", "application/json")}
+        if BACKEND_KEY: hdrs["Authorization"] = "Bearer " + BACKEND_KEY
         req = urllib.request.Request(args.backend + self.path, data=body, headers=hdrs, method=self.command)
         try:
             r = urllib.request.urlopen(req, timeout=600)
@@ -43,7 +45,7 @@ class H(http.server.SimpleHTTPRequestHandler):
         h = self.headers.get("Authorization", "")
         try: pw = base64.b64decode(h[6:]).decode().split(":", 1)[1] if h.startswith("Basic ") else ""
         except Exception: pw = ""
-        if hmac.compare_digest(pw, PASSWORD): return True
+        if hmac.compare_digest(pw.encode(), PASSWORD.encode()): return True
         self.send_response(401); self.send_header("WWW-Authenticate", 'Basic realm="Cognivo"')
         self.send_header("Content-Length", "0"); self.end_headers(); return False
 
@@ -55,12 +57,17 @@ class H(http.server.SimpleHTTPRequestHandler):
             self.send_error(404); return
         super().do_GET()
 
+    def do_HEAD(self):
+        if not self._authed(): return
+        self.send_error(405)
+
     def do_POST(self):
         if not self._authed(): return
         if self.path.startswith("/v1/"): return self._proxy()
         self.send_error(404)
 
 
-if not PASSWORD: print("WARNING: UI_PASSWORD not set - anyone with the URL can use your GPU")
-print(f"Cognivo UI on http://0.0.0.0:{args.port}  ->  model at {args.backend}")
-http.server.ThreadingHTTPServer(("0.0.0.0", args.port), H).serve_forever()
+HOST = "0.0.0.0" if PASSWORD else "127.0.0.1"
+if not PASSWORD: print("UI_PASSWORD not set: listening on localhost only (use an SSH tunnel, or set UI_PASSWORD to expose it)")
+print(f"Cognivo UI on http://{HOST}:{args.port}  ->  model at {args.backend}")
+http.server.ThreadingHTTPServer((HOST, args.port), H).serve_forever()

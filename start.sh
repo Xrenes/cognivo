@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch Cognivo on a Linux cloud GPU box (RunPod, Lambda, Vast.ai, AWS, GCP...).
 #   MODEL=Qwen/Qwen2.5-7B-Instruct bash start.sh
-# Then open http://<server-ip>:8080
+# Then open http://<server-ip>:8080   (set UI_PASSWORD=... to allow remote access)
 set -e
 cd "$(dirname "$0")"
 MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"   # ~16GB VRAM. 24GB+: Qwen2.5-14B-Instruct-AWQ, 80GB: Llama-3.3-70B-Instruct-AWQ
