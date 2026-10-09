@@ -57,6 +57,40 @@ def images(req: ImageRequest, authorization: str|None=Header(default=None)):
         return {'created': int(time.time()), 'data': [{'b64_json': base64.b64encode(buf.getvalue()).decode()}]}
     finally: lock.release()
 
+class ImageEditRequest(ImageRequest):
+    image: str = Field(min_length=100, max_length=4_000_000)  # base64 JPEG/PNG from the website
+    strength: float = Field(default=0.6, ge=0.1, le=1.0)      # how much to change the photo
+
+@app.post('/v1/images/edits')
+def image_edit(req: ImageEditRequest, authorization: str|None=Header(default=None)):
+    authorize(authorization)
+    import __main__, io, base64, math
+    from PIL import Image
+    pipe = getattr(__main__, 'pipe', None)
+    if pipe is None: raise HTTPException(status_code=503, detail='No image model loaded (run load_image_model.py)')
+    try:
+        src = Image.open(io.BytesIO(base64.b64decode(req.image, validate=True))).convert('RGB')
+    except Exception:
+        raise HTTPException(status_code=400, detail='Invalid image')
+    if not lock.acquire(blocking=False): raise HTTPException(status_code=429, detail='GPU busy; retry shortly')
+    try:
+        from diffusers import AutoPipelineForImage2Image
+        # reuse the loaded weights; rebuild only when the notebook loads a different image model
+        if getattr(__main__, '_cognivo_i2i_for', None) is not pipe:
+            __main__._cognivo_i2i = AutoPipelineForImage2Image.from_pipe(pipe)
+            __main__._cognivo_i2i_for = pipe
+        w, h = (int(x) for x in req.size.split('x'))
+        src = src.resize((w, h))
+        steps = int(os.environ.get('COGNIVO_IMAGE_STEPS', '4'))
+        steps = max(steps, math.ceil(1 / req.strength))  # turbo models need steps*strength >= 1
+        guidance = float(os.environ.get('COGNIVO_IMAGE_GUIDANCE', '0'))
+        with torch.inference_mode():
+            img = __main__._cognivo_i2i(prompt=req.prompt, image=src, strength=req.strength,
+                                        num_inference_steps=steps, guidance_scale=guidance).images[0]
+        buf = io.BytesIO(); img.save(buf, format='PNG')
+        return {'created': int(time.time()), 'data': [{'b64_json': base64.b64encode(buf.getvalue()).decode()}]}
+    finally: lock.release()
+
 @app.get('/v1/models')
 def models(authorization: str|None=Header(default=None)):
     authorize(authorization)

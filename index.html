@@ -39,6 +39,10 @@ body.imgmode .modechip{display:flex}
 .modechip select{background:none;border:0;color:var(--accent);font:inherit;font-size:13px;outline:0}
 .modechip select option{background:#222;color:var(--text)}
 .modechip button{color:var(--accent);padding:0 2px}
+.attach{padding:7px;border-radius:9px;color:#bbb;display:flex}
+.attach:hover{background:#2a2a2a;color:var(--text)}
+.chip img{width:28px;height:28px;object-fit:cover;border-radius:5px}
+.msg.user .thumb{display:block;max-width:220px;border-radius:10px;margin-bottom:6px}
 .gen{display:block;max-width:min(100%,512px);border-radius:12px;border:1px solid var(--line)}
 .genwait{width:min(100%,384px);aspect-ratio:1;border-radius:12px;border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);background:linear-gradient(110deg,#151515 30%,#222 50%,#151515 70%);background-size:200% 100%;animation:sh 1.4s linear infinite}
 @keyframes sh{to{background-position:-200% 0}}
@@ -212,6 +216,8 @@ body.collapsed .openbtn{display:grid}
           <span class="modechip" id="modeChip">🖼 Image mode
             <select id="imgSize" title="Image size"><option>512x512</option><option>768x768</option><option>1024x1024</option></select>
             <button id="modeOff" title="Back to chat">✕</button></span>
+          <button class="attach" id="attachBtn" title="Upload photo or file"><svg viewBox="0 0 24 24"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
+          <input type="file" id="fileIn" multiple hidden accept="image/*,.txt,.md,.py,.js,.ts,.tsx,.jsx,.json,.csv,.html,.css,.java,.c,.cpp,.h,.cs,.go,.rs,.rb,.php,.sh,.sql,.yaml,.yml,.xml,.log,.ini,.toml">
           <div class="sp"></div>
           <button class="send" id="sendBtn" title="Send"><svg viewBox="0 0 24 24"><path d="M5 4l15 8-15 8 3-8z"/></svg></button>
         </div>
@@ -290,7 +296,7 @@ function msgHTML(m,i){
   if(m.img && m.role==='assistant') return `<div class="msg bot" data-i="${i}"><div class="ic"><svg><use href="#lg"/></svg></div><div style="flex:1;min-width:0"><div class="b ${m.error?'err':''}">${
     m.error ? md(m.errText) : okImg(m.image) ? `<img class="gen" alt="${esc(m.content)}" src="${m.image}">` : '<div class="genwait">Generating image…</div>'}</div>
   <div class="acts">${okImg(m.image)?'<button data-a="dl" title="Download"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>':''}<button data-a="regen" title="Regenerate"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7"/></svg></button></div></div></div>`;
-  if(m.role==='user') return `<div class="msg user"><div class="b">${esc(m.display??m.content)}</div></div>`;
+  if(m.role==='user') return `<div class="msg user"><div class="b">${okImg(m.thumb)?`<img class="thumb" src="${m.thumb}" alt="">`:''}${esc(m.display??m.content)}</div></div>`;
   return `<div class="msg bot" data-i="${i}"><div class="ic"><svg><use href="#lg"/></svg></div><div style="flex:1;min-width:0"><div class="b ${m.error?'err':''}">${md(m.content)}</div>
   <div class="acts"><button data-a="copy" title="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/></svg></button><button data-a="regen" title="Regenerate"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7"/></svg></button><button data-a="speak" title="Read aloud"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></button></div></div></div>`;
 }
@@ -301,7 +307,7 @@ $('#thread').onclick = e => {
   if(b.dataset.a==='copy'){ navigator.clipboard.writeText(m.content); toast('Copied'); }
   if(b.dataset.a==='speak'){ speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(m.content.replace(/[#*`_>]/g,''))); }
   if(b.dataset.a==='dl') Object.assign(document.createElement('a'),{href:m.image,download:(m.content.replace(/[^\w ]/g,'').slice(0,40)||'image')+'.jpg'}).click();
-  if(b.dataset.a==='regen' && !ctrl){ cur.messages.splice(i); renderThread(); m.img ? generateImage(m.content) : generate(); }
+  if(b.dataset.a==='regen' && !ctrl){ cur.messages.splice(i); renderThread(); m.img ? generateImage(m.content, m.src) : generate(); }
 };
 
 /* ---------- sending ---------- */
@@ -309,7 +315,9 @@ async function send(){
   if(ctrl) return stop();
   const text = $('#input').value.trim();
   if(!text && !attachments.length) return;
-  if(imgMode && !text) return toast('Describe the image you want');
+  if(imgMode && !text) return toast(attachments.length ? 'Describe how to change the photo' : 'Describe the image you want');
+  const hasPhoto = attachments.some(a=>a.type==='image');
+  if(hasPhoto && !imgMode){ toast('The chat model can’t see photos — turn on Image Generation to edit a photo'); return; }
   if(!cur){ cur = {id:crypto.randomUUID?.()||String(Date.now()), title:(text||attachments[0].name).slice(0,60), messages:[], updated:Date.now()}; chats.push(cur); }
   const images = attachments.filter(a=>a.type==='image');
   const docs = attachments.filter(a=>a.type==='text');
@@ -317,9 +325,10 @@ async function send(){
   const content = images.length ? [{type:'text',text:full}, ...images.map(im=>({type:'image_url',image_url:{url:im.data}}))] : full;
   const display = text + (attachments.length ? `\n📎 ${attachments.map(a=>a.name).join(', ')}` : '');
   if(imgMode){
-    cur.messages.push({role:'user', content:text, display:'🖼 '+text, img:true});
-    $('#input').value=''; autosize(); renderThread(); renderHist();
-    return generateImage(text);
+    const photo = attachments.find(a=>a.type==='image');
+    cur.messages.push({role:'user', content:text, display:'🖼 '+text, img:true, thumb:photo?.thumb});
+    $('#input').value=''; autosize(); attachments=[]; renderFiles(); renderThread(); renderHist();
+    return generateImage(text, photo?.data);
   }
   cur.messages.push({role:'user', content, display});
   $('#input').value=''; autosize(); attachments=[]; renderFiles();
@@ -356,12 +365,13 @@ function setImgMode(on){
 // shrink the PNG to a JPEG so chat history fits in browser storage
 const toJpeg = src => new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{ const c=document.createElement('canvas');
   c.width=im.naturalWidth; c.height=im.naturalHeight; c.getContext('2d').drawImage(im,0,0); res(c.toDataURL('image/jpeg',0.85)); }; im.onerror=()=>rej(new Error('Invalid image data')); im.src=src; });
-async function generateImage(prompt){
-  const msg = {role:'assistant', img:true, content:prompt, image:''};
+async function generateImage(prompt, src){
+  const msg = {role:'assistant', img:true, content:prompt, image:'', src: okImg(src) ? src : undefined};
   cur.messages.push(msg); renderThread(); setSending(true); ctrl = new AbortController();
   try{
-    const res = await fetch(cfg.base.replace(/\/$/,'')+'/images/generations', {method:'POST', headers:headers(), signal:ctrl.signal,
-      body: JSON.stringify({prompt:prompt.slice(0,1000), size:$('#imgSize').value, n:1, response_format:'b64_json'})});
+    const res = await fetch(cfg.base.replace(/\/$/,'')+(msg.src?'/images/edits':'/images/generations'), {method:'POST', headers:headers(), signal:ctrl.signal,
+      body: JSON.stringify({prompt:prompt.slice(0,1000), size:$('#imgSize').value, n:1, response_format:'b64_json',
+        ...(msg.src ? {image: msg.src.split(',')[1], strength: 0.6} : {})})});
     if(!res.ok){ const t=(await res.text()).slice(0,300);
       throw new Error(res.status===401?'Wrong or missing access token (Settings).':res.status===404?'This server has no image endpoint. Update kaggle_server.py and run the image-model cell in Kaggle.':res.status===503?'No image model loaded in Kaggle — run the image-model cell.':res.status===429?'GPU busy — try again in a moment.':`HTTP ${res.status}: ${t}`); }
     const b64 = (await res.json()).data?.[0]?.b64_json;
@@ -464,17 +474,30 @@ function autosize(){ input.style.height='auto'; input.style.height=Math.min(inpu
 input.oninput = autosize;
 input.onkeydown = e => { if(e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } };
 $('#sendBtn').onclick = send;
+// downscale an image to fit maxSide and re-encode as JPEG (keeps uploads and saved chats small)
+const shrink = (src,maxSide,q) => new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{
+  const k=Math.min(1,maxSide/Math.max(im.naturalWidth,im.naturalHeight)), c=document.createElement('canvas');
+  c.width=Math.round(im.naturalWidth*k); c.height=Math.round(im.naturalHeight*k);
+  const g=c.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height); g.drawImage(im,0,0,c.width,c.height); res(c.toDataURL('image/jpeg',q)); };
+  im.onerror=()=>rej(new Error('bad image')); im.src=src; });
+$('#attachBtn').onclick = () => $('#fileIn').click();
+$('#fileIn').onchange = e => { addFiles([...e.target.files]); e.target.value=''; };
 async function addFiles(files){
   for(const f of files){
     if(f.size>8e6){ toast(f.name+' is too large'); continue; }
-    if(f.type.startsWith('image/')) attachments.push({name:f.name,type:'image',data:await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(f)})});
-    else attachments.push({name:f.name,type:'text',data:(await f.text()).slice(0,60000)});
+    if(f.type.startsWith('image/')){
+      try{ const url = URL.createObjectURL(f);
+        attachments.push({name:f.name, type:'image', data:await shrink(url,1024,0.88), thumb:await shrink(url,240,0.8)}); URL.revokeObjectURL(url);
+      }catch{ toast("Couldn't read "+f.name); }
+    } else if(!f.type || f.type.startsWith('text/') || /json|xml|javascript|csv|yaml|x-sh|sql/.test(f.type)){
+      attachments.push({name:f.name,type:'text',data:(await f.text()).slice(0,11000)});
+    } else toast(f.name+': only photos and text/code files are supported');
   }
   renderFiles();
 }
 document.addEventListener('paste', e => { const fs=[...e.clipboardData.files]; if(fs.length) addFiles(fs); });
 function renderFiles(){
-  $('#files').innerHTML = attachments.map((a,i)=>`<span class="chip">${a.type==='image'?'🖼️':'📄'} ${esc(a.name)}<button data-i="${i}">✕</button></span>`).join('');
+  $('#files').innerHTML = attachments.map((a,i)=>`<span class="chip">${a.type==='image'&&okImg(a.thumb)?`<img src="${a.thumb}" alt="">`:'📄'} ${esc(a.name)}<button data-i="${i}" title="Remove">✕</button></span>`).join('');
 }
 $('#files').onclick = e => { const b=e.target.closest('button'); if(b){ attachments.splice(+b.dataset.i,1); renderFiles(); } };
 
