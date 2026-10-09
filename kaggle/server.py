@@ -19,9 +19,34 @@ app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS,
                    allow_methods=['GET','POST','OPTIONS'], allow_headers=['Authorization','Content-Type'])
 lock = threading.Lock()
 
+class ImageURL(BaseModel):
+    url: str = Field(max_length=4_000_000)  # data:image/...;base64,...
+class Part(BaseModel):
+    type: Literal['text','image_url']
+    text: str|None = Field(default=None, max_length=12000)
+    image_url: ImageURL|None = None
 class Message(BaseModel):
     role: Literal['system','user','assistant']
-    content: str = Field(min_length=1,max_length=12000)
+    content: str|list[Part] = Field(min_length=1)
+
+    def text(self):
+        if isinstance(self.content, str): return self.content[:12000]
+        return '\n'.join(p.text for p in self.content if p.type=='text' and p.text)
+    def images(self):
+        return [] if isinstance(self.content, str) else [p.image_url.url for p in self.content if p.type=='image_url' and p.image_url]
+
+MAX_IMAGES = 4
+def decode_image(url):
+    import io, base64
+    from PIL import Image
+    if not url.startswith('data:image/') or ';base64,' not in url:
+        raise HTTPException(status_code=400, detail='Images must be base64 data URLs')
+    try:
+        img = Image.open(io.BytesIO(base64.b64decode(url.split(',',1)[1], validate=True)))
+        img.thumbnail((1024, 1024))  # cap size/memory regardless of what the client sent
+        return img.convert('RGB')
+    except Exception:
+        raise HTTPException(status_code=400, detail='Invalid image')
 class Completion(BaseModel):
     model: str
     messages: list[Message] = Field(min_length=1,max_length=16)
@@ -96,6 +121,25 @@ def models(authorization: str|None=Header(default=None)):
     authorize(authorization)
     return {'object':'list','data':[{'id':model_id(),'object':'model','owned_by':'self'}]}
 
+def vision_reply(messages, kwargs):
+    """Messages containing photos go to the vision model (`vlm` + `vlm_processor` from load_vision_model.py)."""
+    import __main__
+    vlm, proc = getattr(__main__,'vlm',None), getattr(__main__,'vlm_processor',None)
+    if vlm is None or proc is None:
+        raise HTTPException(status_code=400, detail='No vision model loaded - run load_vision_model.py in Kaggle')
+    urls = [u for m in messages for u in m.images()]
+    if len(urls) > MAX_IMAGES: raise HTTPException(status_code=400, detail=f'At most {MAX_IMAGES} images per request')
+    images, vl_msgs = [], []
+    for m in messages:
+        parts = [{'type':'image'} for _ in m.images()]
+        images += [decode_image(u) for u in m.images()]
+        if m.text(): parts.append({'type':'text','text':m.text()})
+        vl_msgs.append({'role':m.role,'content':parts})
+    prompt = proc.apply_chat_template(vl_msgs, tokenize=False, add_generation_prompt=True)
+    inputs = proc(text=[prompt], images=images, return_tensors='pt').to(vlm.device)
+    with torch.inference_mode(): out = vlm.generate(**inputs, **kwargs)
+    return proc.batch_decode(out[:, inputs['input_ids'].shape[-1]:], skip_special_tokens=True)[0]
+
 @app.post('/v1/chat/completions')
 def complete(req:Completion,authorization:str|None=Header(default=None)):
     authorize(authorization)
@@ -105,14 +149,18 @@ def complete(req:Completion,authorization:str|None=Header(default=None)):
         import __main__
         mdl=getattr(__main__,'model',None)
         tok=getattr(__main__,'tokenizer',None)
-        if mdl is None or tok is None: raise HTTPException(status_code=503,detail='Model not loaded')
-        messages=[m.model_dump() for m in req.messages]
-        encoded=tok.apply_chat_template(messages,add_generation_prompt=True,return_tensors='pt',return_dict=True).to(mdl.device)
-        kwargs={'max_new_tokens':req.max_tokens,'pad_token_id':tok.eos_token_id}
+        if (mdl is None or tok is None) and not any(m.images() for m in req.messages):
+            raise HTTPException(status_code=503,detail='Model not loaded')
+        kwargs={'max_new_tokens':req.max_tokens}
         if req.temperature>0: kwargs.update(do_sample=True,temperature=req.temperature)
         else: kwargs['do_sample']=False
-        with torch.inference_mode(): out=mdl.generate(**encoded,**kwargs)
-        response=tok.decode(out[0][encoded['input_ids'].shape[-1]:],skip_special_tokens=True)
+        if any(m.images() for m in req.messages):
+            response = vision_reply(req.messages, kwargs)
+        else:
+            messages=[{'role':m.role,'content':m.text()} for m in req.messages]
+            encoded=tok.apply_chat_template(messages,add_generation_prompt=True,return_tensors='pt',return_dict=True).to(mdl.device)
+            with torch.inference_mode(): out=mdl.generate(**encoded,pad_token_id=tok.eos_token_id,**kwargs)
+            response=tok.decode(out[0][encoded['input_ids'].shape[-1]:],skip_special_tokens=True)
         return {'id':'chatcmpl-'+secrets.token_hex(7),'object':'chat.completion',
                 'created':int(time.time()),'model':model_id(),
                 'choices':[{'index':0,'message':{'role':'assistant','content':response},'finish_reason':'stop'}]}

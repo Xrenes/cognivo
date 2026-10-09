@@ -316,12 +316,10 @@ async function send(){
   const text = $('#input').value.trim();
   if(!text && !attachments.length) return;
   if(imgMode && !text) return toast(attachments.length ? 'Describe how to change the photo' : 'Describe the image you want');
-  const hasPhoto = attachments.some(a=>a.type==='image');
-  if(hasPhoto && !imgMode){ toast('The chat model can’t see photos — turn on Image Generation to edit a photo'); return; }
   if(!cur){ cur = {id:crypto.randomUUID?.()||String(Date.now()), title:(text||attachments[0].name).slice(0,60), messages:[], updated:Date.now()}; chats.push(cur); }
   const images = attachments.filter(a=>a.type==='image');
   const docs = attachments.filter(a=>a.type==='text');
-  let full = text + docs.map(d=>`\n\n--- File: ${d.name} ---\n${d.data}`).join('');
+  let full = (text || (images.length ? 'Describe this image.' : '')) + docs.map(d=>`\n\n--- File: ${d.name} ---\n${d.data}`).join('');
   const content = images.length ? [{type:'text',text:full}, ...images.map(im=>({type:'image_url',image_url:{url:im.data}}))] : full;
   const display = text + (attachments.length ? `\n📎 ${attachments.map(a=>a.name).join(', ')}` : '');
   if(imgMode){
@@ -330,7 +328,7 @@ async function send(){
     $('#input').value=''; autosize(); attachments=[]; renderFiles(); renderThread(); renderHist();
     return generateImage(text, photo?.data);
   }
-  cur.messages.push({role:'user', content, display});
+  cur.messages.push({role:'user', content, display, thumb:images[0]?.thumb});
   $('#input').value=''; autosize(); attachments=[]; renderFiles();
   renderThread(); renderHist();
   generate();
@@ -348,8 +346,12 @@ function systemPrompt(){
 const asText = c => typeof c==='string' ? c : c.map(p=>p.text||'').join('\n');
 // Kaggle server limits: <=16 messages, <=12000 chars each, no empty content, max_tokens <=1024
 function buildMessages(){
-  const hist = cur.messages.slice(0,-1).filter(m=>!m.error && !m.img)
-    .map(m=>({role:m.role, content:asText(m.content).slice(0,12000)})).filter(m=>m.content.trim()).slice(-15);
+  // photos are sent only from the newest message (server allows 4); older turns go as text
+  const turns = cur.messages.slice(0,-1).filter(m=>!m.error && !m.img), last = turns[turns.length-1];
+  const hist = turns.map(m=> m===last && Array.isArray(m.content)
+      ? {role:m.role, content:m.content.slice(0,5).map(p=>p.type==='text' ? {type:'text', text:p.text.slice(0,12000)} : p)}
+      : {role:m.role, content:asText(m.content).slice(0,12000)})
+    .filter(m=>typeof m.content!=='string' || m.content.trim()).slice(-15);
   while(hist.length && hist[0].role!=='user') hist.shift();
   return [{role:'system',content:systemPrompt().slice(0,12000)}, ...hist];
 }
@@ -402,6 +404,7 @@ async function generate(){
         messages:buildMessages()})
     });
     if(!res.ok){ const t=(await res.text()).slice(0,300);
+      if(/vision model/i.test(t)) throw new Error('To let the AI see photos, run kaggle/load_vision_model.py in your Kaggle notebook.');
       throw new Error(res.status===401?'Wrong or missing access token (Settings → API key).':res.status===429?'GPU busy with another request — try again in a moment.':`HTTP ${res.status}: ${t}`); }
     if(!(res.headers.get('content-type')||'').includes('event-stream')){
       const j = await res.json(); msg.content = j.choices?.[0]?.message?.content ?? j.choices?.[0]?.text ?? '';
