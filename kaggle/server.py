@@ -3,7 +3,7 @@ import os, time, secrets, threading
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Annotated, Literal
 import torch
 
 def model_id():  # read per request so the notebook can switch models without restarting the server
@@ -27,26 +27,31 @@ class Part(BaseModel):
     image_url: ImageURL|None = None
 class Message(BaseModel):
     role: Literal['system','user','assistant']
-    content: str|list[Part] = Field(min_length=1)
+    # plain text, or at most 6 parts (text + up to 4 images); 16 messages max per request
+    content: Annotated[str, Field(min_length=1, max_length=12000)] | Annotated[list[Part], Field(min_length=1, max_length=6)]
 
     def text(self):
-        if isinstance(self.content, str): return self.content[:12000]
-        return '\n'.join(p.text for p in self.content if p.type=='text' and p.text)
+        if isinstance(self.content, str): return self.content
+        return '\n'.join(p.text for p in self.content if p.type=='text' and p.text)[:12000]
     def images(self):
         return [] if isinstance(self.content, str) else [p.image_url.url for p in self.content if p.type=='image_url' and p.image_url]
 
 MAX_IMAGES = 4
-def decode_image(url):
+MAX_PIXELS = 4096 * 4096  # reject decompression bombs before any pixel data is decoded
+def open_image(b64):
     import io, base64
     from PIL import Image
-    if not url.startswith('data:image/') or ';base64,' not in url:
-        raise HTTPException(status_code=400, detail='Images must be base64 data URLs')
     try:
-        img = Image.open(io.BytesIO(base64.b64decode(url.split(',',1)[1], validate=True)))
+        img = Image.open(io.BytesIO(base64.b64decode(b64, validate=True)))  # header only, lazy
+        if img.width * img.height > MAX_PIXELS: raise ValueError('too many pixels')
         img.thumbnail((1024, 1024))  # cap size/memory regardless of what the client sent
         return img.convert('RGB')
     except Exception:
-        raise HTTPException(status_code=400, detail='Invalid image')
+        raise HTTPException(status_code=400, detail='Invalid or too large image (max 4096x4096)')
+def decode_image(url):
+    if not url.startswith('data:image/') or ';base64,' not in url:
+        raise HTTPException(status_code=400, detail='Images must be base64 data URLs')
+    return open_image(url.split(',',1)[1])
 class Completion(BaseModel):
     model: str
     messages: list[Message] = Field(min_length=1,max_length=16)
@@ -93,10 +98,7 @@ def image_edit(req: ImageEditRequest, authorization: str|None=Header(default=Non
     from PIL import Image
     pipe = getattr(__main__, 'pipe', None)
     if pipe is None: raise HTTPException(status_code=503, detail='No image model loaded (run load_image_model.py)')
-    try:
-        src = Image.open(io.BytesIO(base64.b64decode(req.image, validate=True))).convert('RGB')
-    except Exception:
-        raise HTTPException(status_code=400, detail='Invalid image')
+    src = open_image(req.image)
     if not lock.acquire(blocking=False): raise HTTPException(status_code=429, detail='GPU busy; retry shortly')
     try:
         from diffusers import AutoPipelineForImage2Image
