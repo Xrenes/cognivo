@@ -209,21 +209,18 @@ body.collapsed .openbtn{display:grid}
 
 
 <dialog id="settingsDlg"><form method="dialog">
-  <h2>Settings</h2>
-  <label>API base URL (OpenAI-compatible, e.g. vLLM / Ollama)</label>
-  <input id="sBase" placeholder="http://YOUR_GPU_IP:8000/v1">
-  <label>API key (optional)</label>
-  <input id="sKey" type="password" placeholder="sk-...">
-  <label>Model</label>
-  <input id="sModel" placeholder="auto-detect from /models">
-  <label>Display name</label>
-  <input id="sName" placeholder="You">
-  <label>System prompt</label>
-  <textarea id="sSys" rows="3"></textarea>
-  <div style="display:flex;gap:8px"><div style="flex:1"><label>Temperature</label><input id="sTemp" type="number" step="0.1" min="0" max="2"></div>
-  <div style="flex:1"><label>Max tokens</label><input id="sMax" type="number" min="16"></div></div>
+  <h2>Cognivo — Kaggle Connection</h2>
+  <label>Kaggle notebook URL <a id="sNbOpen" href="#" target="_blank" rel="noopener" style="color:var(--accent);float:right">Open ↗</a></label>
+  <input id="sNb" placeholder="https://www.kaggle.com/code/you/your-notebook" autocomplete="off" spellcheck="false">
+  <label>AI server endpoint <small style="color:var(--dim)">— Kaggle “1. API Base URL”</small></label>
+  <input id="sBase" placeholder="https://xxxx.trycloudflare.com/v1" autocomplete="off" spellcheck="false">
+  <label>AI model <small style="color:var(--dim)">— Kaggle “2. Model ID”</small></label>
+  <input id="sModel" list="sModels" placeholder="Filled in by Test Connection" autocomplete="off" spellcheck="false">
+  <datalist id="sModels"></datalist>
+  <label>AI access token <small style="color:var(--dim)">— Kaggle “3. API Access Token”</small></label>
+  <input id="sKey" type="password" placeholder="ACCESS TOKEN printed by the Kaggle cell" autocomplete="off">
   <div class="status" id="sStatus"></div>
-  <div class="row"><button value="cancel">Cancel</button><button type="button" id="testBtn">Test connection</button><button class="pri" value="save" id="saveBtn">Save</button></div>
+  <div class="row"><button value="cancel">Cancel</button><button type="button" id="testBtn">Test Connection</button><button class="pri" value="save" id="saveBtn">Save Settings</button></div>
 </form></dialog>
 
 <dialog id="infoDlg"><form method="dialog"><h2 id="infoT"></h2><div id="infoB" style="color:#ccc;line-height:1.6;font-size:14px"></div><div class="row"><button class="pri">OK</button></div></form></dialog>
@@ -233,7 +230,7 @@ body.collapsed .openbtn{display:grid}
 const $ = s => document.querySelector(s);
 const LS = {get(k,d){try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
 const defaults = {base: location.protocol.startsWith('http') ? location.origin + '/v1' : 'http://localhost:8000/v1', key:'', model:'', name:'You',
-  sys:'You are Cognivo, a helpful, precise AI assistant. Use Markdown when helpful.', temp:0.7, max:2048, lang:''};
+  sys:'You are Cognivo, a helpful, precise AI assistant. Use Markdown when helpful.', temp:0.7, max:1024, lang:''};
 let cfg = {...defaults, ...LS.get('cg.cfg',{})};
 let chats = LS.get('cg.chats', []);
 let cur = null, ctrl = null, attachments = [];
@@ -315,6 +312,15 @@ function systemPrompt(){
   return s;
 }
 
+const asText = c => typeof c==='string' ? c : c.map(p=>p.text||'').join('\n');
+// Kaggle server limits: <=16 messages, <=12000 chars each, no empty content, max_tokens <=1024
+function buildMessages(){
+  const hist = cur.messages.slice(0,-1).filter(m=>!m.error)
+    .map(m=>({role:m.role, content:asText(m.content).slice(0,12000)})).filter(m=>m.content.trim()).slice(-15);
+  while(hist.length && hist[0].role!=='user') hist.shift();
+  return [{role:'system',content:systemPrompt().slice(0,12000)}, ...hist];
+}
+
 async function generate(){
   const msg = {role:'assistant', content:''};
   cur.messages.push(msg);
@@ -327,10 +333,14 @@ async function generate(){
     if(!cfg.model) await loadModels(true);
     const res = await fetch(cfg.base.replace(/\/$/,'')+'/chat/completions', {
       method:'POST', headers:headers(), signal:ctrl.signal,
-      body: JSON.stringify({model:cfg.model, stream:true, temperature:+cfg.temp, max_tokens:+cfg.max,
-        messages:[{role:'system',content:systemPrompt()}, ...cur.messages.slice(0,-1).filter(m=>!m.error).map(({role,content})=>({role,content}))]})
+      body: JSON.stringify({model:cfg.model, stream:true, temperature:+cfg.temp, max_tokens:Math.min(+cfg.max||1024,1024),
+        messages:buildMessages()})
     });
-    if(!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0,300)}`);
+    if(!res.ok){ const t=(await res.text()).slice(0,300);
+      throw new Error(res.status===401?'Wrong or missing access token (Settings → API key).':res.status===429?'GPU busy with another request — try again in a moment.':`HTTP ${res.status}: ${t}`); }
+    if(!(res.headers.get('content-type')||'').includes('event-stream')){
+      const j = await res.json(); msg.content = j.choices?.[0]?.message?.content ?? j.choices?.[0]?.text ?? '';
+    } else {
     const reader = res.body.getReader(), dec = new TextDecoder(); let buf='', last=0;
     for(;;){
       const {done,value} = await reader.read(); if(done) break;
@@ -343,8 +353,10 @@ async function generate(){
       }
       if(performance.now()-last>50){ el.innerHTML = md(msg.content); scrollDown(); last=performance.now(); }
     }
+    }
   }catch(e){
-    if(e.name!=='AbortError'){ msg.error=true; msg.content += (msg.content?'\n\n':'') + `**Couldn't reach the model.** ${e.message}\n\nOpen **Settings** and check the API base URL (currently \`${cfg.base}\`).`; el.classList.add('err'); }
+    if(e.name!=='AbortError'){ msg.error=true; const net = e instanceof TypeError ? ` (network/CORS — is the Kaggle cell + tunnel still running, and is COGNIVO_ALLOWED_ORIGINS exactly ${location.origin}?)` : '';
+      msg.content += (msg.content?'\n\n':'') + `**Couldn't reach the model.** ${e.message}${net}\n\nOpen **Settings** and check the API base URL (currently \`${cfg.base}\`).`; el.classList.add('err'); }
   }
   el.classList.remove('cursor'); el.innerHTML = md(msg.content||'_(stopped)_');
   cur.updated = Date.now(); save(); renderHist(); setSending(false); ctrl=null; scrollDown();
@@ -356,6 +368,7 @@ function setSending(on){
 }
 
 /* ---------- models ---------- */
+let lastErr='';
 async function loadModels(pickFirst){
   try{
     const r = await fetch(cfg.base.replace(/\/$/,'')+'/models',{headers:headers()});
@@ -366,6 +379,7 @@ async function loadModels(pickFirst){
     $('#conn').textContent='Connected · GPU'; $('#conn').style.color='#5fd37a';
     updateModelName(); return ids;
   }catch(e){
+    lastErr = e instanceof TypeError ? `Network/CORS error reaching ${cfg.base}/models — check the tunnel URL is live and COGNIVO_ALLOWED_ORIGINS is ${location.origin}` : e.message==='HTTP 401' ? 'Wrong or missing access token' : e.message;
     $('#conn').textContent='Not connected'; $('#conn').style.color='';
     $('#modelMenu').innerHTML = `<button data-open="settings">Configure server…</button>`;
     if(pickFirst) throw new Error('Could not list models from '+cfg.base+' ('+e.message+')');
@@ -439,17 +453,23 @@ $('#tplBtn').onclick = () => { newChat(); input.value='Act as an expert [role]. 
 
 /* ---------- settings ---------- */
 function openSettings(){
-  $('#sBase').value=cfg.base; $('#sKey').value=cfg.key; $('#sModel').value=cfg.model; $('#sName').value=cfg.name;
-  $('#sSys').value=cfg.sys; $('#sTemp').value=cfg.temp; $('#sMax').value=cfg.max; $('#sStatus').textContent='';
+  $('#sBase').value = cfg.base===defaults.base ? '' : cfg.base; $('#sKey').value=cfg.key;
+  $('#sNb').value = cfg.notebook||''; $('#sModel').value = cfg.model||''; $('#sStatus').textContent=''; nbLink();
   $('#settingsDlg').showModal();
 }
 $('#settingsBtn').onclick = openSettings;
-const readForm = () => ({...cfg, base:$('#sBase').value.trim()||defaults.base, key:$('#sKey').value.trim(), model:$('#sModel').value.trim(),
-  name:$('#sName').value.trim()||'You', sys:$('#sSys').value, temp:$('#sTemp').value||0.7, max:$('#sMax').value||2048});
+// accept the tunnel URL with or without /v1 and trailing slash
+const normBase = u => { u=u.trim().replace(/\/+$/,''); return !u ? defaults.base : /\/v1$/.test(u) ? u : u+'/v1'; };
+const readForm = () => ({...cfg, base:normBase($('#sBase').value), key:$('#sKey').value.trim(),
+  model:$('#sModel').value.trim(), notebook:$('#sNb').value.trim()});
+function nbLink(){ const u=$('#sNb').value.trim(), ok=/^https:\/\/(www\.)?kaggle\.com\//.test(u);
+  $('#sNbOpen').style.display = ok ? '' : 'none'; if(ok) $('#sNbOpen').href=u; }
+$('#sNb').oninput = nbLink;
 $('#testBtn').onclick = async () => {
   const old=cfg; cfg=readForm(); $('#sStatus').textContent='Testing…';
-  const ids = await loadModels(); $('#sStatus').textContent = ids.length ? '✅ Connected. Models: '+ids.join(', ') : '❌ Could not reach '+cfg.base+'/models';
-  if(ids.length) $('#sModel').value = cfg.model; cfg=old;
+  const ids = await loadModels(); $('#sStatus').textContent = ids.length ? '✅ Connected. Models: '+ids.join(', ') : '❌ '+(lastErr||'Could not reach '+cfg.base+'/models');
+  if(ids.length){ $('#sModels').innerHTML = ids.map(id=>`<option value="${esc(id)}">`).join(''); $('#sModel').value = cfg.model; }
+  cfg=old; LS.set('cg.cfg',cfg);  // testing must not save unsaved values
 };
 $('#settingsDlg').addEventListener('close', () => {
   if($('#settingsDlg').returnValue!=='save') return;
