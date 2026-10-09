@@ -8,7 +8,8 @@ A working static chat page + connection manager + OpenAI-compatible Kaggle infer
 3. Cell 3 prints **1. API Base URL**, **2. Model ID**, **3. API Access Token**.
 4. Open the site → **Settings** (sidebar) → paste them into the matching fields → **Test Connection** → **Save Settings**.
 5. Images: run `kaggle/load_image_model.py` as another cell (any time), then click **Image Generation** in the site sidebar and describe the picture.
-6. Switch models: change `MODEL_ID` in cell 1 and rerun only cell 1, then Test Connection again.
+6. Optional Kaggle-only UI: run `kaggle/gradio_ui.py` as a cell for a Gradio page (Edit Photo / Generate Image / Chat) with a public login-protected link.
+7. Switch models: change `MODEL_ID` in cell 1 and rerun only cell 1, then Test Connection again.
 
 `index.html` (root) is the main Cognivo UI. `web/index.html` is an older minimal alternative.
 
