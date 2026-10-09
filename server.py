@@ -41,7 +41,11 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(b"0\r\n\r\n")
 
     def _authed(self):
-        if not PASSWORD: return True
+        if not PASSWORD:
+            # localhost-only mode: reject foreign Host headers (blocks DNS-rebinding from web pages)
+            host = self.headers.get("Host", "").rsplit(":", 1)[0].strip("[]").lower()
+            if host in ("localhost", "127.0.0.1", "::1"): return True
+            self.send_error(403); return False
         h = self.headers.get("Authorization", "")
         try: pw = base64.b64decode(h[6:]).decode().split(":", 1)[1] if h.startswith("Basic ") else ""
         except Exception: pw = ""
