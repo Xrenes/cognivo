@@ -2,6 +2,7 @@
 import os, time, secrets, threading
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Annotated, Literal
 import torch
@@ -141,6 +142,82 @@ def vision_reply(messages, kwargs):
     inputs = proc(text=[prompt], images=images, return_tensors='pt').to(vlm.device)
     with torch.inference_mode(): out = vlm.generate(**inputs, **kwargs)
     return proc.batch_decode(out[:, inputs['input_ids'].shape[-1]:], skip_special_tokens=True)[0]
+
+class VideoRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=1000)
+    size: Literal['832x480','480x832'] = '832x480'
+    num_frames: Literal[33,49,81] = 49   # ~2s/3s/5s at 16fps
+
+VIDEO_DIR = '/kaggle/working/cognivo_videos'
+os.makedirs(VIDEO_DIR, exist_ok=True)
+jobs = {}            # id -> {status, progress, error, owner}
+jobs_lock = threading.Lock()
+MAX_QUEUED_PER_TOKEN = 2  # a client can't pile up unlimited background GPU work
+MAX_SAVED_VIDEOS = 20     # keep Kaggle's disk from filling up over a long session
+
+def _cleanup_old_videos():
+    files = sorted((f for f in os.listdir(VIDEO_DIR) if f.endswith('.mp4')),
+                   key=lambda f: os.path.getmtime(os.path.join(VIDEO_DIR, f)))
+    for f in files[:-MAX_SAVED_VIDEOS]:
+        try: os.remove(os.path.join(VIDEO_DIR, f))
+        except OSError: pass
+
+def _run_video_job(job_id, prompt, w, h, num_frames):
+    import __main__
+    try:
+        vid_pipe = getattr(__main__, 'video_pipe', None)
+        if vid_pipe is None:
+            raise RuntimeError('No video model loaded - run load_video_model.py in Kaggle')
+        if not lock.acquire(timeout=1800):  # wait for any chat/image job ahead of it, up to 30 min
+            raise RuntimeError('Timed out waiting for the GPU')
+        try:
+            from diffusers.utils import export_to_video
+            steps = int(os.environ.get('COGNIVO_VIDEO_STEPS', '30'))
+            def cb(pipe_, step, timestep, kw):
+                with jobs_lock: jobs[job_id]['progress'] = min(0.99, (step + 1) / steps)
+                return kw
+            with torch.inference_mode():
+                out = vid_pipe(prompt=prompt, height=h, width=w, num_frames=num_frames,
+                               num_inference_steps=steps, callback_on_step_end=cb).frames[0]
+            path = os.path.join(VIDEO_DIR, job_id + '.mp4')
+            export_to_video(out, path, fps=16)
+            with jobs_lock: jobs[job_id].update(status='done', progress=1.0, path=path)
+            _cleanup_old_videos()
+        finally:
+            lock.release()
+    except Exception as e:
+        with jobs_lock: jobs[job_id].update(status='failed', error=str(e)[:300])
+
+@app.post('/v1/videos')
+def create_video(req: VideoRequest, authorization: str|None=Header(default=None)):
+    authorize(authorization)
+    import __main__
+    if getattr(__main__, 'video_pipe', None) is None:
+        raise HTTPException(status_code=503, detail='No video model loaded (run load_video_model.py)')
+    with jobs_lock:
+        active = sum(1 for j in jobs.values() if j['owner']==authorization and j['status'] in ('queued','running'))
+        if active >= MAX_QUEUED_PER_TOKEN:
+            raise HTTPException(status_code=429, detail='Too many videos already queued - wait for one to finish')
+        job_id = secrets.token_hex(8)
+        jobs[job_id] = {'status': 'queued', 'progress': 0.0, 'owner': authorization}
+    w, h = (int(x) for x in req.size.split('x'))
+    threading.Thread(target=_run_video_job, args=(job_id, req.prompt, w, h, req.num_frames), daemon=True).start()
+    return {'id': job_id, 'status': 'queued'}
+
+@app.get('/v1/videos/{job_id}')
+def video_status(job_id: str, authorization: str|None=Header(default=None)):
+    authorize(authorization)
+    with jobs_lock: j = jobs.get(job_id)
+    if not j or j['owner'] != authorization: raise HTTPException(status_code=404, detail='Unknown job')
+    return {'id': job_id, 'status': j['status'], 'progress': j.get('progress', 0), 'error': j.get('error')}
+
+@app.get('/v1/videos/{job_id}/content')
+def video_content(job_id: str, authorization: str|None=Header(default=None)):
+    authorize(authorization)
+    with jobs_lock: j = jobs.get(job_id)
+    if not j or j['owner'] != authorization: raise HTTPException(status_code=404, detail='Unknown job')
+    if j['status'] != 'done': raise HTTPException(status_code=409, detail=f"Video is {j['status']}, not ready")
+    return FileResponse(j['path'], media_type='video/mp4', filename='cognivo.mp4')
 
 @app.post('/v1/chat/completions')
 def complete(req:Completion,authorization:str|None=Header(default=None)):

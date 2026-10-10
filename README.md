@@ -9,8 +9,9 @@ A working static chat page + connection manager + OpenAI-compatible Kaggle infer
 4. Open the site → **Settings** (sidebar) → paste them into the matching fields → **Test Connection** → **Save Settings**.
 5. Images: run `kaggle/load_image_model.py` as another cell (any time), then click **Image Generation** in the site sidebar and describe the picture.
 6. Let the AI see photos: run `kaggle/load_vision_model.py` (Qwen2-VL-2B). Then attach a photo with 📎 in normal chat and ask about it.
-7. Optional Kaggle-only UI: run `kaggle/gradio_ui.py` as a cell for a Gradio page (Edit Photo / Generate Image / Chat) with a public login-protected link.
-8. Switch models: change `MODEL_ID` in cell 1 and rerun only cell 1, then Test Connection again.
+7. Videos: run `kaggle/load_video_model.py` (Wan2.1-T2V-1.3B), then click **Video Generation** in the sidebar and describe a short clip. A 3s clip takes roughly 3-8 minutes on a T4 — the site polls in the background and shows a progress bar, so you can keep using chat/images while it renders.
+8. Optional Kaggle-only UI: run `kaggle/gradio_ui.py` as a cell for a Gradio page (Edit Photo / Generate Image / Chat) with a public login-protected link.
+9. Switch models: change `MODEL_ID` in cell 1 and rerun only cell 1, then Test Connection again.
 
 `index.html` (root) is the main Cognivo UI. `web/index.html` is an older minimal alternative.
 

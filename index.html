@@ -35,7 +35,9 @@ body.collapsed aside{margin-left:-240px}
 .nav svg{width:17px;height:17px}
 .nav button.on{background:rgba(255,138,61,.12);color:var(--accent)}
 .modechip{display:none;align-items:center;gap:6px;color:var(--accent);background:rgba(255,138,61,.08);box-shadow:inset 0 0 0 1px var(--accent);border-radius:9px;padding:5px 10px;font-size:14px}
-body.imgmode .modechip{display:flex}
+body.imgmode #modeChip,body.vidmode #vidChip{display:flex}
+.genvid{display:block;max-width:min(100%,640px);border-radius:12px;border:1px solid var(--line);background:#000}
+.loadvid{border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--accent)}
 .modechip select{background:none;border:0;color:var(--accent);font:inherit;font-size:13px;outline:0}
 .modechip select option{background:#222;color:var(--text)}
 .modechip button{color:var(--accent);padding:0 2px}
@@ -174,6 +176,7 @@ body.collapsed .openbtn{display:grid}
   <button class="newchat" id="newChat"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Chat<kbd>Ctrl N</kbd></button>
   <div class="nav">
     <button id="imgModeBtn"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>Image Generation</button>
+    <button id="vidModeBtn"><svg viewBox="0 0 24 24"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4z"/></svg>Video Generation</button>
     <button id="kbBtn"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7.5 7.5 11 16M16.5 7.5 13 16"/></svg>Knowledge Base</button>
     <button id="tplBtn"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7zM4 7l8 4 8-4M12 11v10"/></svg>Templates</button>
   </div>
@@ -216,6 +219,10 @@ body.collapsed .openbtn{display:grid}
           <span class="modechip" id="modeChip">🖼 Image mode
             <select id="imgSize" title="Image size"><option>512x512</option><option>768x768</option><option>1024x1024</option></select>
             <button id="modeOff" title="Back to chat">✕</button></span>
+          <span class="modechip" id="vidChip">🎬 Video mode
+            <select id="vidLen" title="Length"><option value="33">2 s</option><option value="49" selected>3 s</option><option value="81">5 s</option></select>
+            <select id="vidSize" title="Shape"><option value="832x480">Landscape</option><option value="480x832">Portrait</option></select>
+            <button id="vidOff" title="Back to chat">✕</button></span>
           <button class="attach" id="attachBtn" title="Upload photo or file"><svg viewBox="0 0 24 24"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
           <input type="file" id="fileIn" multiple hidden accept="image/*,.txt,.md,.py,.js,.ts,.tsx,.jsx,.json,.csv,.html,.css,.java,.c,.cpp,.h,.cs,.go,.rs,.rb,.php,.sh,.sql,.yaml,.yml,.xml,.log,.ini,.toml">
           <div class="sp"></div>
@@ -292,7 +299,17 @@ function renderThread(){
   scrollDown();
 }
 const okImg = u => typeof u==='string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(u);
+const videoUrls = {};  // job id -> blob: URL (videos are too big for browser storage; kept for this tab only)
+function vidBody(m){
+  if(m.error) return md(m.errText);
+  const url = videoUrls[m.job];
+  if(url) return `<video class="genvid" src="${url}" controls loop autoplay muted playsinline></video>`;
+  if(m.status==='done') return `<button class="loadvid" data-a="loadvid">▶ Load video (works while the Kaggle session is running)</button>`;
+  return `<div class="genwait">${m.status==='queued'?'Waiting for the GPU…':`Generating video… ${Math.round((m.progress||0)*100)}%`}</div>`;
+}
 function msgHTML(m,i){
+  if(m.vid && m.role==='assistant') return `<div class="msg bot" data-i="${i}"><div class="ic"><svg><use href="#lg"/></svg></div><div style="flex:1;min-width:0"><div class="b ${m.error?'err':''}">${vidBody(m)}</div>
+  <div class="acts">${videoUrls[m.job]?'<button data-a="dlvid" title="Download"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>':''}<button data-a="regen" title="Regenerate"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7"/></svg></button></div></div></div>`;
   if(m.img && m.role==='assistant') return `<div class="msg bot" data-i="${i}"><div class="ic"><svg><use href="#lg"/></svg></div><div style="flex:1;min-width:0"><div class="b ${m.error?'err':''}">${
     m.error ? md(m.errText) : okImg(m.image) ? `<img class="gen" alt="${esc(m.content)}" src="${m.image}">` : '<div class="genwait">Generating image…</div>'}</div>
   <div class="acts">${okImg(m.image)?'<button data-a="dl" title="Download"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>':''}<button data-a="regen" title="Regenerate"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7"/></svg></button></div></div></div>`;
@@ -307,7 +324,9 @@ $('#thread').onclick = e => {
   if(b.dataset.a==='copy'){ navigator.clipboard.writeText(m.content); toast('Copied'); }
   if(b.dataset.a==='speak'){ speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(m.content.replace(/[#*`_>]/g,''))); }
   if(b.dataset.a==='dl') Object.assign(document.createElement('a'),{href:m.image,download:(m.content.replace(/[^\w ]/g,'').slice(0,40)||'image')+'.jpg'}).click();
-  if(b.dataset.a==='regen' && !ctrl){ cur.messages.splice(i); renderThread(); m.img ? generateImage(m.content, m.src) : generate(); }
+  if(b.dataset.a==='dlvid') Object.assign(document.createElement('a'),{href:videoUrls[m.job],download:(m.content.replace(/[^\w ]/g,'').slice(0,40)||'video')+'.mp4'}).click();
+  if(b.dataset.a==='loadvid') fetchVideo(m).catch(e=>toast('Video unavailable: '+e.message));
+  if(b.dataset.a==='regen' && !ctrl){ cur.messages.splice(i); renderThread(); m.vid ? generateVideo(m.content, m.opts) : m.img ? generateImage(m.content, m.src) : generate(); }
 };
 
 /* ---------- sending ---------- */
@@ -315,6 +334,7 @@ async function send(){
   if(ctrl) return stop();
   const text = $('#input').value.trim();
   if(!text && !attachments.length) return;
+  if(vidMode && !text) return toast('Describe the video you want');
   if(imgMode && !text) return toast(attachments.length ? 'Describe how to change the photo' : 'Describe the image you want');
   if(!cur){ cur = {id:crypto.randomUUID?.()||String(Date.now()), title:(text||attachments[0].name).slice(0,60), messages:[], updated:Date.now()}; chats.push(cur); }
   const images = attachments.filter(a=>a.type==='image');
@@ -322,6 +342,11 @@ async function send(){
   let full = (text || (images.length ? 'Describe this image.' : '')) + docs.map(d=>`\n\n--- File: ${d.name} ---\n${d.data}`).join('');
   const content = images.length ? [{type:'text',text:full}, ...images.map(im=>({type:'image_url',image_url:{url:im.data}}))] : full;
   const display = text + (attachments.length ? `\n📎 ${attachments.map(a=>a.name).join(', ')}` : '');
+  if(vidMode){
+    cur.messages.push({role:'user', content:text, display:'🎬 '+text, vid:true});
+    $('#input').value=''; autosize(); attachments=[]; renderFiles(); renderThread(); renderHist();
+    return generateVideo(text, {frames:+$('#vidLen').value, size:$('#vidSize').value});
+  }
   if(imgMode){
     const photo = attachments.find(a=>a.type==='image');
     cur.messages.push({role:'user', content:text, display:'🖼 '+text, img:true, thumb:photo?.thumb});
@@ -347,7 +372,7 @@ const asText = c => typeof c==='string' ? c : c.map(p=>p.text||'').join('\n');
 // Kaggle server limits: <=16 messages, <=12000 chars each, no empty content, max_tokens <=1024
 function buildMessages(){
   // photos are sent only from the newest message (server allows 4); older turns go as text
-  const turns = cur.messages.slice(0,-1).filter(m=>!m.error && !m.img), last = turns[turns.length-1];
+  const turns = cur.messages.slice(0,-1).filter(m=>!m.error && !m.img && !m.vid), last = turns[turns.length-1];
   const hist = turns.map(m=> m===last && Array.isArray(m.content)
       ? {role:m.role, content:m.content.slice(0,5).map(p=>p.type==='text' ? {type:'text', text:p.text.slice(0,12000)} : p)}
       : {role:m.role, content:asText(m.content).slice(0,12000)})
@@ -357,13 +382,16 @@ function buildMessages(){
 }
 
 /* ---------- image generation ---------- */
-let imgMode = false;
-function setImgMode(on){
-  imgMode = on; document.body.classList.toggle('imgmode', on); $('#imgModeBtn').classList.toggle('on', on);
-  input.placeholder = on ? 'Describe an image to generate…' : 'Ask me anything...';
-  $('#welcome h1').textContent = on ? 'What should we create?' : 'Let’s start a smart conversation';
+let imgMode = false, vidMode = false;
+function setMode(mode){  // 'chat' | 'image' | 'video'
+  imgMode = mode==='image'; vidMode = mode==='video';
+  document.body.classList.toggle('imgmode', imgMode); $('#imgModeBtn').classList.toggle('on', imgMode);
+  document.body.classList.toggle('vidmode', vidMode); $('#vidModeBtn').classList.toggle('on', vidMode);
+  input.placeholder = imgMode ? 'Describe an image to generate…' : vidMode ? 'Describe a short video to generate…' : 'Ask me anything...';
+  $('#welcome h1').textContent = imgMode || vidMode ? 'What should we create?' : 'Let’s start a smart conversation';
   input.focus();
 }
+const setImgMode = on => setMode(on ? 'image' : 'chat');
 // shrink the PNG to a JPEG so chat history fits in browser storage
 const toJpeg = src => new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{ const c=document.createElement('canvas');
   c.width=im.naturalWidth; c.height=im.naturalHeight; c.getContext('2d').drawImage(im,0,0); res(c.toDataURL('image/jpeg',0.85)); }; im.onerror=()=>rej(new Error('Invalid image data')); im.src=src; });
@@ -387,6 +415,46 @@ async function generateImage(prompt, src){
 }
 $('#imgModeBtn').onclick = () => { setImgMode(!imgMode); if(innerWidth<820) document.body.classList.add('collapsed'); };
 $('#modeOff').onclick = () => setImgMode(false);
+
+/* ---------- video generation (async job: start, poll, download) ---------- */
+const apiBase = () => cfg.base.replace(/\/$/,'');
+async function apiErr(res){
+  const t = (await res.text()).slice(0,300);
+  return new Error(res.status===401?'Wrong or missing access token (Settings).':res.status===404?'This server has no video endpoint. Update kaggle_server.py and run load_video_model.py in Kaggle.':res.status===503?'No video model loaded in Kaggle — run load_video_model.py.':res.status===429?'The GPU is busy with another video — try again when it finishes.':`HTTP ${res.status}: ${t}`);
+}
+async function fetchVideo(m){
+  const res = await fetch(`${apiBase()}/videos/${encodeURIComponent(m.job)}/content`, {headers:headers()});
+  if(!res.ok) throw await apiErr(res);
+  videoUrls[m.job] = URL.createObjectURL(await res.blob()); renderThread();
+}
+const sleep = (ms, signal) => new Promise((res,rej)=>{ const t=setTimeout(res,ms); signal.addEventListener('abort',()=>{clearTimeout(t); rej(new DOMException('','AbortError'));},{once:true}); });
+async function generateVideo(prompt, opts){
+  const msg = {role:'assistant', vid:true, content:prompt, opts, status:'queued', progress:0};
+  cur.messages.push(msg); renderThread(); setSending(true); ctrl = new AbortController();
+  const chat = cur;
+  try{
+    let res = await fetch(apiBase()+'/videos', {method:'POST', headers:headers(), signal:ctrl.signal,
+      body: JSON.stringify({prompt:prompt.slice(0,1000), size:opts.size, num_frames:opts.frames})});
+    if(!res.ok) throw await apiErr(res);
+    msg.job = (await res.json()).id; save();
+    for(;;){  // poll; each request is short so the tunnel's ~100 s limit never applies
+      await sleep(4000, ctrl.signal);
+      res = await fetch(`${apiBase()}/videos/${encodeURIComponent(msg.job)}`, {headers:headers(), signal:ctrl.signal});
+      if(!res.ok) throw await apiErr(res);
+      const j = await res.json(); msg.status = j.status; msg.progress = j.progress;
+      if(j.status==='failed') throw new Error(j.error || 'Video generation failed');
+      if(cur===chat) renderThread();
+      if(j.status==='done') break;
+    }
+    await fetchVideo(msg);
+  }catch(e){
+    msg.error = true;
+    msg.errText = e.name==='AbortError' ? '_(stopped waiting — the video may still finish on Kaggle)_' : `**Couldn't generate the video.** ${e instanceof TypeError ? 'Network/CORS — is the Kaggle cell + tunnel still running?' : e.message}`;
+  }
+  chat.updated = Date.now(); save(); if(cur===chat) renderThread(); renderHist(); setSending(false); ctrl=null;
+}
+$('#vidModeBtn').onclick = () => { setMode(vidMode ? 'chat' : 'video'); if(innerWidth<820) document.body.classList.add('collapsed'); };
+$('#vidOff').onclick = () => setMode('chat');
 
 async function generate(){
   const msg = {role:'assistant', content:''};
